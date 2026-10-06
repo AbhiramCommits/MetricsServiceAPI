@@ -1,6 +1,7 @@
 import time
 from typing import Any, Dict, Optional, Tuple
 
+
 class TTLCache:
     def __init__(self, ttl_seconds: int = 60):
         self.ttl_seconds = ttl_seconds

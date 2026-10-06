@@ -1,56 +1,72 @@
+from __future__ import annotations
+
+import argparse
 import asyncio
+import os
 import time
-import httpx
 from statistics import median
 
-async def bench_endpoint(client: httpx.AsyncClient, url: str, n: int = 200):
-    # Cold request
+import httpx
+
+DEFAULT_BASE_URL = os.environ.get("METRICS_BASE_URL", "http://localhost:8000")
+
+ENDPOINTS = [
+    "/metrics/revenue/daily?limit=100",
+    "/metrics/revenue/by-region",
+    "/metrics/cohorts",
+    "/metrics/top-customers?top_n=5",
+]
+
+
+async def _time_request(client: httpx.AsyncClient, url: str) -> float:
     start = time.perf_counter()
     resp = await client.get(url)
-    cold_time = (time.perf_counter() - start) * 1000
-    assert resp.status_code == 200
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    assert resp.status_code == 200, f"{url} -> {resp.status_code}"
+    return elapsed_ms
 
-    times = []
-    for _ in range(n - 1):
-        start = time.perf_counter()
-        resp = await client.get(url)
-        t = (time.perf_counter() - start) * 1000
-        times.append(t)
-        assert resp.status_code == 200
 
-    times.sort()
-    p50 = median(times)
-    p95 = times[int(len(times) * 0.95)]
-    return cold_time, p50, p95
+async def bench_endpoint(
+    client: httpx.AsyncClient, url: str, n: int = 200
+) -> tuple[float, float, float]:
+    # First request is served from a cold cache.
+    cold_ms = await _time_request(client, url)
 
-async def main():
-    endpoints = [
-        "http://localhost:8000/metrics/revenue/daily",
-        "http://localhost:8000/metrics/revenue/by-region",
-        "http://localhost:8000/metrics/cohorts",
-        "http://localhost:8000/metrics/top-customers"
-    ]
+    warm = [await _time_request(client, url) for _ in range(n - 1)]
+    warm.sort()
+    p50 = median(warm)
+    p95 = warm[min(int(len(warm) * 0.95), len(warm) - 1)]
+    return cold_ms, p50, p95
 
+
+async def main(base_url: str, n: int) -> None:
     async with httpx.AsyncClient(timeout=30.0) as client:
-        # Check health first
         try:
-            r = await client.get("http://localhost:8000/health")
-            print("Health check:", r.json())
-        except Exception as e:
-            print("Server not running. Please start uvicorn first.", e)
+            health = await client.get(f"{base_url}/health")
+        except Exception as exc:  # noqa: BLE001
+            print(f"Server not reachable at {base_url}: {exc}")
             return
+        print("Health:", health.json())
 
-        print("\n--- BENCHMARK RESULTS (N=200 requests) ---")
-        for ep in endpoints:
-            cold, p50, p95 = await bench_endpoint(client, ep, n=200)
-            print(f"Endpoint: {ep}")
-            print(f"  Cold Cache: {cold:.2f} ms")
-            print(f"  Warm Cache p50: {p50:.2f} ms")
-            print(f"  Warm Cache p95: {p95:.2f} ms")
+        # Reset cache stats so the reported hit rate reflects this run.
+        await client.post(f"{base_url}/admin/cache/invalidate")
 
-        # Get cache stats
-        stats_resp = await client.get("http://localhost:8000/admin/cache/stats")
-        print("\nCache Stats:", stats_resp.json())
+        print(f"\n--- BENCHMARK (N={n} requests/endpoint) ---")
+        for path in ENDPOINTS:
+            url = f"{base_url}{path}"
+            cold, p50, p95 = await bench_endpoint(client, url, n=n)
+            print(f"{path}")
+            print(f"  cold: {cold:8.2f} ms")
+            print(f"  warm p50: {p50:8.2f} ms")
+            print(f"  warm p95: {p95:8.2f} ms")
+
+        stats = (await client.get(f"{base_url}/admin/cache/stats")).json()
+        print("\nCache stats:", stats)
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
+    parser.add_argument("--n", type=int, default=200)
+    args = parser.parse_args()
+    asyncio.run(main(args.base_url, args.n))

@@ -1,0 +1,5 @@
+# Airflow is kept in its own requirements file because Airflow 3.x pins
+# SQLAlchemy < 2.0, which conflicts with the async SQLAlchemy engine the API
+# requires. Install this into a dedicated Airflow environment (or use the
+# official Airflow image) for `airflow standalone` / `airflow dags test`.
+apache-airflow>=2.9,<3

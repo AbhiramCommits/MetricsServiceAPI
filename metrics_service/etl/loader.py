@@ -1,9 +1,9 @@
 import pathlib
-from datetime import datetime, timezone
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from metrics_service.etl.watermark import get_watermark, set_watermark
 from metrics_service.etl.run_history import track_run
+
 
 async def load_dim_customer(session: AsyncSession) -> dict:
     async with track_run(session, "dim_customer") as metrics:
@@ -27,6 +27,7 @@ async def load_dim_customer(session: AsyncSession) -> dict:
             return metrics
         return metrics
 
+
 async def load_fact_orders(session: AsyncSession) -> dict:
     async with track_run(session, "fact_orders") as metrics:
         watermark = await get_watermark(session, "fact_orders")
@@ -48,6 +49,7 @@ async def load_fact_orders(session: AsyncSession) -> dict:
             await set_watermark(session, "fact_orders", max_ts)
             return metrics
         return metrics
+
 
 async def run_all(session: AsyncSession) -> dict:
     res_cust = await load_dim_customer(session)

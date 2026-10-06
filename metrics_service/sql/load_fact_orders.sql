@@ -4,7 +4,7 @@ WITH staging_changes AS (
     WHERE source_updated_at > :watermark
 ),
 resolved AS (
-    SELECT 
+    SELECT DISTINCT ON (sc.order_id)
         sc.order_id,
         dc.customer_sk,
         sc.order_date,
@@ -14,6 +14,7 @@ resolved AS (
         sc.op_type
     FROM staging_changes sc
     JOIN warehouse.dim_customer dc ON sc.customer_id = dc.customer_id AND dc.is_current = true
+    ORDER BY sc.order_id, sc.source_updated_at DESC
 ),
 deleted AS (
     DELETE FROM warehouse.fact_orders fo
